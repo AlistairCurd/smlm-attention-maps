@@ -1,5 +1,5 @@
-# Feature extraction model
-*best_ckpt.pth
+# Feature extraction model - download from elsewhere
+*xiyue-wang.pth
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
