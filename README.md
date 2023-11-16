@@ -1,5 +1,13 @@
 # High-Resolution Heatmaps for Marugoto MIL Models
 
+## Include feature extraction model in directory
+
+`create_heatmaps.py` curently expects to work with the RetCCL feature extractor. See [./RetCCL/README.md](https://github.com/AlistairCurd/smlm-attention-maps/tree/main/RetCCL) 
+
+Download best_ckpt.pth from latest Xiyue Wang: https://drive.google.com/drive/folders/1AhstAFVqtTqxeS9WlBpU41BV08LYFUnL.
+
+Place in this repository's home directory and rename to `xiyue-wang.pth` to match what `create_heatmaps.py` expects.
+
 ## Options
 
 ```sh
