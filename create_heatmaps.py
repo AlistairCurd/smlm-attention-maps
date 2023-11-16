@@ -340,9 +340,9 @@ if __name__ == "__main__":
         slide_cache_dir.mkdir(parents=True, exist_ok=True)
 
         # Load WSI as one image
-        if (slide_jpg := slide_cache_dir / "slide.jpg").exists():
+        if (slide_tif := slide_cache_dir / "slide.tif").exists():
             # slide_array = np.array(PIL.Image.open(slide_jpg))
-            slide_array = imread(slide_jpg)
+            slide_array = imread(slide_tif)
 
         else:
             slide_path = get_wsi(slide_url, cache_dir=args.cache_dir)
@@ -351,7 +351,6 @@ if __name__ == "__main__":
             # slide_array = load_slide(slide)
             slide_array = np.repeat(slide[:, :, np.newaxis], 3, axis=2) # From grey to 3-channel
             # PIL.Image.fromarray(slide_array).save(slide_jpg)
-            imsave(slide_jpg, slide_array, quality=100, check_contrast=False)
             imsave(slide_cache_dir / "slide.tif", slide_array, check_contrast=False)
 
         # pass the WSI through the fully convolutional network'
@@ -405,7 +404,7 @@ if __name__ == "__main__":
         #    )
         #    < args.mask_threshold
         #)
-        mask = np.ones(att_map.shape)
+        mask = np.ones(att_map.shape)  # Just keep everything at the moment
 
         attention_maps[slide_name] = att_map
         score_maps[slide_name] = score_map
@@ -441,10 +440,9 @@ if __name__ == "__main__":
         slide_outdir = args.output_path / slide_name
 
         # slide_im = PIL.Image.open(slide_cache_dir / "slide.jpg")
-        slide_im = imread(slide_cache_dir / "slide.jpg")
+        slide_im = imread(slide_cache_dir / "slide.tif")
 
-        if not (slide_outdir / "slide.jpg").exists():
-            shutil.copyfile(slide_cache_dir / "slide.jpg", slide_outdir / "slide.jpg")
+        if not (slide_outdir / "slide.tif").exists():
             shutil.copyfile(slide_cache_dir / "slide.tif", slide_outdir / "slide.tif")
 
         # mask = masks[slide_name]
