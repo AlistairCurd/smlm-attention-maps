@@ -158,38 +158,51 @@ import torch
 from torchvision import transforms
 import os
 from matplotlib import pyplot as plt
-import openslide
+# import openslide
 from tqdm import tqdm
 import numpy as np
 from fastai.vision.all import load_learner
 from pyzstd import ZstdFile
-import PIL
+# import PIL
 from sftp import get_wsi
 
+# APC data
+from skimage.io import imread
+from skimage.io import imsave
+from skimage.transform import resize
+
 # supress DecompressionBombWarning: yes, our files are really that big (‘-’*)
-PIL.Image.MAX_IMAGE_PIXELS = None
+# PIL.Image.MAX_IMAGE_PIXELS = None
 
 
 def _load_tile(
-    slide: openslide.OpenSlide,
+    # slide: openslide.OpenSlide,
+    slide, # numpy array from skimage
     pos: Tuple[int, int],
     stride: Tuple[int, int],
-    target_size: Tuple[int, int],
+    target_size # : Tuple[int, int], # Now np.array
 ) -> np.ndarray:
     # Loads part of a WSI. Used for parallelization with ThreadPoolExecutor
-    tile = slide.read_region(pos, 0, stride).convert("RGB").resize(target_size)
-    return np.array(tile)
+    # tile = slide.read_region(pos, 0, stride).convert("RGB").resize(target_size)
+    tile = slide[pos[0]:pos[0] + stride[0], pos[1]:pos[1] + stride[1]]
+    tile = resize(tile, tuple(target_size), preserve_range=True)
+    tile = np.repeat(tile[:, :, np.newaxis], 3, axis=2)
+    # return np.array(tile)
+    return tile
 
 
-def load_slide(slide: openslide.OpenSlide, target_mpp: float = 256 / 224) -> np.ndarray:
+# def load_slide(slide: openslide.OpenSlide, target_mpp: float = 256 / 224) -> np.ndarray:
+def load_slide(slide, target_mpp: float = 256 / 224) -> np.ndarray: # slide is now array from skimage
     """Loads a slide into a numpy array."""
     # We load the slides in tiles to
     #  1. parallelize the loading process
     #  2. not use too much data when then scaling down the tiles from their
     #     initial size
     steps = 8
-    stride = np.ceil(np.array(slide.dimensions) / steps).astype(int)
-    slide_mpp = float(slide.properties[openslide.PROPERTY_NAME_MPP_X])
+    # stride = np.ceil(np.array(slide.dimensions) / steps).astype(int)
+    stride = np.ceil(np.asarray(slide.shape) / steps).astype(int)
+    # slide_mpp = float(slide.properties[openslide.PROPERTY_NAME_MPP_X])
+    slide_mpp = 0.1 # HARDCODE HERE FOR NOW
     tile_target_size = np.round(stride * slide_mpp / target_mpp).astype(int)
 
     with futures.ThreadPoolExecutor(min(32, os.cpu_count() or 1)) as executor:
@@ -198,12 +211,15 @@ def load_slide(slide: openslide.OpenSlide, target_mpp: float = 256 / 224) -> np.
         for i in range(steps):  # row
             for j in range(steps):  # column
                 future = executor.submit(
-                    _load_tile, slide, (stride * (j, i)), stride, tile_target_size  # type: ignore
+                    # _load_tile, slide, (stride * (j, i)), stride, tile_target_size  # type: ignore
+                    _load_tile, slide, (stride * (i, j)), stride, tile_target_size  # type: ignore
                 )
                 future_coords[future] = (i, j)
 
         # write the loaded tiles into an image as soon as they are loaded
-        im = np.zeros((*(tile_target_size * steps)[::-1], 3), dtype=np.uint8)
+        # im = np.zeros((*(tile_target_size * steps)[::-1], 3), dtype=np.uint8)
+        im = np.zeros((*(tile_target_size * steps), 3), dtype=np.uint8)
+
         for tile_future in tqdm(
             futures.as_completed(future_coords),
             total=steps * steps,
@@ -212,8 +228,11 @@ def load_slide(slide: openslide.OpenSlide, target_mpp: float = 256 / 224) -> np.
         ):
             i, j = future_coords[tile_future]
             tile = tile_future.result()
-            x, y = tile_target_size * (j, i)
-            im[y : y + tile.shape[0], x : x + tile.shape[1], :] = tile
+
+            x, y = tile_target_size * (i, j) # * (j, i)
+            # im[y : y + tile.shape[0], x : x + tile.shape[1], :] = tile
+            im[x : x + tile.shape[0], y : y + tile.shape[1], :] = tile
+
 
     return im
 
@@ -311,7 +330,7 @@ if __name__ == "__main__":
     # then we output the actual maps.
     attention_maps: Dict[str, torch.Tensor] = {}
     score_maps: Dict[str, torch.Tensor] = {}
-    masks: Dict[str, torch.Tensor] = {}
+    # masks: Dict[str, torch.Tensor] = {}
 
     print("Extracting features, attentions and scores...")
     for slide_url in (progress := tqdm(args.slide_urls, leave=False)):
@@ -322,12 +341,18 @@ if __name__ == "__main__":
 
         # Load WSI as one image
         if (slide_jpg := slide_cache_dir / "slide.jpg").exists():
-            slide_array = np.array(PIL.Image.open(slide_jpg))
+            # slide_array = np.array(PIL.Image.open(slide_jpg))
+            slide_array = imread(slide_jpg)
+
         else:
             slide_path = get_wsi(slide_url, cache_dir=args.cache_dir)
-            slide = openslide.OpenSlide(str(slide_path))
-            slide_array = load_slide(slide)
-            PIL.Image.fromarray(slide_array).save(slide_jpg)
+            # slide = openslide.OpenSlide(str(slide_path))
+            slide = imread(slide_path)
+            # slide_array = load_slide(slide)
+            slide_array = np.repeat(slide[:, :, np.newaxis], 3, axis=2) # From grey to 3-channel
+            # PIL.Image.fromarray(slide_array).save(slide_jpg)
+            imsave(slide_jpg, slide_array, quality=100, check_contrast=False)
+            imsave(slide_cache_dir / "slide.tif", slide_array, check_contrast=False)
 
         # pass the WSI through the fully convolutional network'
         # since our RAM is still too small, we do this in two steps
@@ -341,9 +366,11 @@ if __name__ == "__main__":
         else:
             max_slice_size = 0xA800000  # experimentally determined
             # ceil(pixels/max_slice_size)
-            no_slices = (
-                np.prod(slide_array.shape) + max_slice_size - 1
-            ) // max_slice_size
+            # TRY SETTING NO SLICES
+            no_slices = 1
+            #no_slices = (
+            #    np.prod(slide_array.shape) + max_slice_size - 1
+            #) // max_slice_size
             step = slide_array.shape[1] // no_slices
             slices = []
             for slice_i in range(no_slices):
@@ -370,22 +397,24 @@ if __name__ == "__main__":
             score_map = torch.softmax(score_map, 0).cpu()
 
         # compute foreground mask
-        mask = (
-            np.array(
-                PIL.Image.fromarray(slide_array)
-                .resize(att_map.shape[::-1])
-                .convert("L")
-            )
-            < args.mask_threshold
-        )
+        #mask = (
+        #    np.array(
+        #        PIL.Image.fromarray(slide_array)
+        #        .resize(att_map.shape[::-1])
+        #        .convert("L")
+        #    )
+        #    < args.mask_threshold
+        #)
+        mask = np.ones(att_map.shape)
 
         attention_maps[slide_name] = att_map
         score_maps[slide_name] = score_map
-        masks[slide_name] = mask
+        # masks[slide_name] = mask
 
     # now we can use all of the features to calculate the scaling factors
     all_attentions = torch.cat(
-        [attention_maps[s].view(-1)[masks[s].reshape(-1)] for s in score_maps.keys()]
+        # [attention_maps[s].view(-1)[masks[s].reshape(-1)] for s in score_maps.keys()]
+        [attention_maps[s].view(-1) for s in score_maps.keys()]
     )
     att_lower = all_attentions.quantile(args.att_lower_threshold)
     att_upper = all_attentions.quantile(args.att_upper_threshold)
@@ -393,7 +422,8 @@ if __name__ == "__main__":
     all_true_scores = torch.cat(
         [
             # mask out background scores, then linearize them
-            score_maps[s][true_class_idx].view(-1)[masks[s].reshape(-1)]
+            # score_maps[s][true_class_idx].view(-1)[masks[s].reshape(-1)]
+            score_maps[s][true_class_idx].view(-1)
             for s in score_maps.keys()
         ]
     )
@@ -410,11 +440,14 @@ if __name__ == "__main__":
         progress.set_description(slide_name)
         slide_outdir = args.output_path / slide_name
 
-        slide_im = PIL.Image.open(slide_cache_dir / "slide.jpg")
+        # slide_im = PIL.Image.open(slide_cache_dir / "slide.jpg")
+        slide_im = imread(slide_cache_dir / "slide.jpg")
+
         if not (slide_outdir / "slide.jpg").exists():
             shutil.copyfile(slide_cache_dir / "slide.jpg", slide_outdir / "slide.jpg")
+            shutil.copyfile(slide_cache_dir / "slide.tif", slide_outdir / "slide.tif")
 
-        mask = masks[slide_name]
+        # mask = masks[slide_name]
 
         # attention map
         att_map = (attention_maps[slide_name] - att_lower) / (att_upper - att_lower)
@@ -423,14 +456,23 @@ if __name__ == "__main__":
         # bare attention
         im = plt.get_cmap(args.att_cmap)(att_map)
         im[:, :, 3] = mask
-        PIL.Image.fromarray(np.uint8(im * 255.0)).save(slide_outdir / "attention.png")
+        # PIL.Image.fromarray(np.uint8(im * 255.0)).save(slide_outdir / "attention.png")
+        imsave(slide_outdir / "attention.png", np.uint8(im * 255.0), check_contrast=False)
         # attention map (blended with slide)
         im[:, :, 3] *= args.att_alpha
-        map_im = PIL.Image.fromarray(np.uint8(im * 255.0))
-        map_im = map_im.resize(slide_im.size, PIL.Image.Resampling.NEAREST)
-        x = slide_im.copy().convert("RGBA")
-        x.paste(map_im, mask=map_im)
-        x.convert("RGB").save(slide_outdir / "attention_overlayed.jpg")
+        # map_im = PIL.Image.fromarray(np.uint8(im * 255.0))
+        map_im = np.uint8(im * 255.0)
+        # map_im = map_im.resize(slide_im.size, PIL.Image.Resampling.NEAREST)
+        map_im = resize(map_im, slide_im.shape)
+
+        # x = slide_im.copy().convert("RGBA")
+        # x.paste(map_im, mask=map_im)
+        # x.convert("RGB").save(slide_outdir / "attention_overlayed.jpg")
+
+        # Quick version with transparency
+        opacity = 0.5
+        overlay = np.ubyte(opacity * slide_im + (1 - opacity) * map_im)
+        imsave(slide_outdir / "attention_overlayed.png", overlay, check_contrast=False)
 
         # score map
         scaled_score_map = (
@@ -441,10 +483,19 @@ if __name__ == "__main__":
         # create image with RGB from scores, Alpha from attention
         im = plt.get_cmap(args.score_cmap)(scaled_score_map)
         im[:, :, 3] = att_map * mask * args.score_alpha
-        map_im = PIL.Image.fromarray(np.uint8(im * 255.0))
-        map_im.save(slide_outdir / "map.png")
+        # map_im = PIL.Image.fromarray(np.uint8(im * 255.0))
+        map_im = np.uint8(im * 255.0)
+        # map_im.save(slide_outdir / "map.png")
+        imsave(slide_outdir / "map.png", map_im)
         # overlayed onto slide
-        map_im = map_im.resize(slide_im.size, PIL.Image.Resampling.NEAREST)
-        x = slide_im.copy().convert("RGBA")
-        x.paste(map_im, mask=map_im)
-        x.convert("RGB").save(slide_outdir / "map_overlayed.jpg")
+        # map_im = map_im.resize(slide_im.size, PIL.Image.Resampling.NEAREST)
+        map_im = resize(map_im, slide_im.shape)
+
+        # x = slide_im.copy().convert("RGBA")
+        # x.paste(map_im, mask=map_im)
+        # x.convert("RGB").save(slide_outdir / "map_overlayed.jpg")
+
+        # Quick version with transparency
+        opacity = 0.5
+        overlay = np.ubyte(opacity * slide_im + (1 - opacity) * map_im)
+        imsave(slide_outdir / "map_overlayed.png", overlay, check_contrast=False)
