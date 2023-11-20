@@ -351,7 +351,20 @@ if __name__ == "__main__":
             # slide_array = load_slide(slide)
             slide_array = np.repeat(slide[:, :, np.newaxis], 3, axis=2) # From grey to 3-channel
             # PIL.Image.fromarray(slide_array).save(slide_jpg)
-            imsave(slide_cache_dir / "slide.tif", slide_array, check_contrast=False)
+
+            # To visualise, rescale FOV image so that structure is visible
+            fraction_nonzeros_to_saturate = 0.2
+            # Find brightness value of pixel to scale to 255
+            level_to_saturate = np.percentile(
+                slide_array[slide_array > 0],
+                100. * (1. - fraction_nonzeros_to_saturate)
+                )
+            # Scale and clip
+            slide_array_vis = slide_array * 255. / level_to_saturate
+            slide_array_vis[slide_array_vis > 255.] = 255.
+            slide_array_vis = np.uint8(slide_array_vis)
+
+            imsave(slide_cache_dir / "slide.tif", slide_array_vis, check_contrast=False)
 
         # pass the WSI through the fully convolutional network'
         # since our RAM is still too small, we do this in two steps
@@ -470,16 +483,22 @@ if __name__ == "__main__":
                         )
         map_im = map_im[0:slide_im.shape[0], 0:slide_im.shape[1]]
         map_im = np.uint8(map_im * 255.)
-        imsave(slide_outdir / 'upscaled_attentiont.png', map_im)
+        imsave(slide_outdir / 'upscaled_attention.png', map_im)
 
         # x = slide_im.copy().convert("RGBA")
         # x.paste(map_im, mask=map_im)
         # x.convert("RGB").save(slide_outdir / "attention_overlayed.jpg")
 
         # Quick version with transparency
-        opacity = 0.5
-        overlay = np.ubyte(opacity * slide_im + (1 - opacity) * map_im)
-        imsave(slide_outdir / "attention_overlayed.png", overlay, check_contrast=False)
+        # opacity = 0.5
+        # overlay = np.ubyte(opacity * slide_im + (1 - opacity) * map_im)
+        # imsave(slide_outdir / "attention_overlayed.png", overlay, check_contrast=False)
+
+        # Multiply FOV image by attention map
+        slide_array_vis_norm = slide_array_vis / 255.  # 0 to 1
+        attention_coded_image = map_im[:, :, 0:3] * slide_array_vis_norm
+        attention_coded_image = np.uint8(attention_coded_image)
+        imsave(slide_outdir / 'attention-coded-fov.tif', attention_coded_image)
 
         # score map
         scaled_score_map = (
