@@ -459,9 +459,18 @@ if __name__ == "__main__":
         # attention map (blended with slide)
         im[:, :, 3] *= args.att_alpha
         # map_im = PIL.Image.fromarray(np.uint8(im * 255.0))
-        map_im = np.uint8(im * 255.0)
+
+        # Resize to match input image: * 32 for ResNet50
+        # and crop right- and bottom-most pixels
         # map_im = map_im.resize(slide_im.size, PIL.Image.Resampling.NEAREST)
-        map_im = resize(map_im, slide_im.shape)
+        map_im = resize(im, [im.shape[0] * 32,
+                             im.shape[1] * 32,
+                             4
+                             ]
+                        )
+        map_im = map_im[0:slide_im.shape[0], 0:slide_im.shape[1]]
+        map_im = np.uint8(map_im * 255.)
+        imsave(slide_outdir / 'upscaled_attentiont.png', map_im)
 
         # x = slide_im.copy().convert("RGBA")
         # x.paste(map_im, mask=map_im)
