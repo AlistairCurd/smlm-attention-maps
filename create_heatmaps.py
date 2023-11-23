@@ -330,7 +330,7 @@ if __name__ == "__main__":
     # then we output the actual maps.
     attention_maps: Dict[str, torch.Tensor] = {}
     score_maps: Dict[str, torch.Tensor] = {}
-    # masks: Dict[str, torch.Tensor] = {}
+    masks: Dict[str, torch.Tensor] = {}
 
     print("Extracting features, attentions and scores...")
     for slide_url in (progress := tqdm(args.slide_urls, leave=False)):
@@ -372,7 +372,7 @@ if __name__ == "__main__":
             slide_array_vis[slide_array_vis > 255.] = 255.
             slide_array_vis = np.uint8(slide_array_vis)
 
-            fov_tif_path = slide_cache_dir / \
+            fov_slidetif_path = slide_cache_dir / \
                 "fov-sat{}pc.tif".format(fraction_nonzeros_to_saturate)
 
             imsave(fov_tif_path, slide_array_vis, check_contrast=False)
@@ -432,7 +432,7 @@ if __name__ == "__main__":
 
         attention_maps[slide_name] = att_map
         score_maps[slide_name] = score_map
-        # masks[slide_name] = mask
+        masks[slide_name] = mask
 
     # now we can use all of the features to calculate the scaling factors
     all_attentions = torch.cat(
@@ -471,7 +471,7 @@ if __name__ == "__main__":
                             slide_outdir / fov_tif_path.name
                             )
 
-        # mask = masks[slide_name]
+        mask = masks[slide_name]
 
         # attention map
         att_map = (attention_maps[slide_name] - att_lower) / (att_upper - att_lower)
@@ -479,9 +479,14 @@ if __name__ == "__main__":
 
         # bare attention
         im = plt.get_cmap(args.att_cmap)(att_map)
+
         im[:, :, 3] = mask
+
         # PIL.Image.fromarray(np.uint8(im * 255.0)).save(slide_outdir / "attention.png")
-        imsave(slide_outdir / 'attention.png', np.uint8(im * 255.0), check_contrast=False)
+        imsave(slide_outdir / 'attention.png',
+               np.uint8(im * 255.0),
+               check_contrast=False
+               )
         # attention map (blended with slide)
         im[:, :, 3] *= args.att_alpha
         # map_im = PIL.Image.fromarray(np.uint8(im * 255.0))
@@ -508,10 +513,17 @@ if __name__ == "__main__":
         # imsave(slide_outdir / "attention_overlayed.png", overlay, check_contrast=False)
 
         # Multiply FOV image by attention map
-        slide_array_vis_norm = slide_array_vis / 255.  # 0 to 1
-        attention_coded_image = map_im[:, :, 0:3] * slide_array_vis_norm
-        attention_coded_image = np.uint8(attention_coded_image)
-        imsave(slide_outdir / 'attention-coded-fov.tif', attention_coded_image)
+        print(fov_tif_path)
+        try:
+            slide_array_vis_norm = slide_array_vis / 255.  # 0 to 1
+            attention_coded_image = map_im[:, :, 0:3] * slide_array_vis_norm
+            attention_coded_image = np.uint8(attention_coded_image)
+        except ValueError:
+            breakpoint()
+        imsave(slide_outdir / 'attention-coded-fov.tif',
+               attention_coded_image,
+               check_contrast=False
+               )
 
         # score map
         scaled_score_map = (
@@ -545,7 +557,10 @@ if __name__ == "__main__":
         slide_array_vis_norm = slide_array_vis / 255.  # 0 to 1
         attention_coded_image = map_im[:, :, 0:3] * slide_array_vis_norm
         attention_coded_image = np.uint8(attention_coded_image)
-        imsave(slide_outdir / 'score-coded-fov.tif', attention_coded_image)
+        imsave(slide_outdir / 'score-coded-fov.tif',
+               attention_coded_image,
+               check_contrast=False
+               )
 
         # x = slide_im.copy().convert("RGBA")
         # x.paste(map_im, mask=map_im)
