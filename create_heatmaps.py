@@ -13,7 +13,9 @@ import warnings
 # loading all the below packages takes quite a bit of time, so get cli parsing
 # out of the way beforehand so it's more responsive in case of errors
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Create heatmaps for MIL models.")
+    parser = argparse.ArgumentParser(
+        description="Create heatmaps for MIL models."
+        )
     parser.add_argument(
         "slide_urls",
         metavar="SLIDE_URL",
@@ -29,7 +31,8 @@ if __name__ == "__main__":
         help="MIL model used to generate attention / score maps.",
     )
     parser.add_argument(
-        "-o", "--output-path", type=Path, required=True, help="Path to save results to."
+        "-o", "--output-path",
+        type=Path, required=True, help="Path to save results to."
     )
     parser.add_argument(
         "-t",
@@ -79,7 +82,8 @@ if __name__ == "__main__":
         type=float,
         default=1.0,
         help="Quantile to squash attention from during attention scaling "
-        " (e.g. 0.99 will lead to the top 1%% of attention scores to become 1)",
+        " (e.g. 0.99 will lead to the top 1%% of attention scores"
+        " becoming 1)",
     )
     threshold_group.add_argument(
         "--att-lower-threshold",
@@ -87,7 +91,8 @@ if __name__ == "__main__":
         type=float,
         default=0.01,
         help="Quantile to squash attention to during attention scaling "
-        " (e.g. 0.01 will lead to the bottom 1%% of attention scores to become 0)",
+        " (e.g. 0.01 will lead to the bottom 1%% of attention scores"
+        " becoming 0)",
     )
     threshold_group.add_argument(
         "--score-threshold",
@@ -95,11 +100,13 @@ if __name__ == "__main__":
         type=float,
         default=0.95,
         help="Quantile to consider in score scaling "
-        "(e.g. 0.95 will discard the top / bottom 5%% of score values as outliers)",
+        "(e.g. 0.95 will discard the top / bottom 5%% of score values"
+        " as outliers)",
     )
     colormap_group = parser.add_argument_group(
         "colors",
-        "color maps to use for attention / score maps (see https://matplotlib.org/stable/tutorials/colors/colormaps.html)",
+        "color maps to use for attention / score maps"
+        " (see https://matplotlib.org/stable/tutorials/colors/colormaps.html)",
     )
     colormap_group.add_argument(
         "--att-cmap",
@@ -132,9 +139,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if not args.cache_dir:
         warnings.warn(
-            "no cache directory specified! If you are generating heat maps for multiple targets, "
-            "it is HIGHLY recommended to manually set a cache directory. This directory should be "
-            "the SAME for each run."
+            "no cache directory specified!"
+            " If you are generating heat maps for multiple targets, "
+            "it is HIGHLY recommended to manually set a cache directory."
+            " This directory should be the SAME for each run."
         )
         args.cache_dir = args.output_path / "cache"
 
@@ -146,9 +154,12 @@ if __name__ == "__main__":
     ), "threshold needs to be between 0 and 1."
     assert (
         args.att_lower_threshold < args.att_upper_threshold
-    ), "lower attention threshold needs to be lower than upper attention threshold."
+    ), "lower attention threshold needs to be lower" \
+        " than upper attention threshold."
 
-
+# load base fully convolutional model (w/o pooling / flattening or head)
+# In this case we're loading the xiyue wang RetCLL model,
+# change this bit for other networks
 if (p := "./RetCCL") not in sys.path:
     sys.path = [p] + sys.path
 import ResNet
@@ -177,13 +188,14 @@ from skimage.transform import resize
 
 def _load_tile(
     # slide: openslide.OpenSlide,
-    slide, # numpy array from skimage
+    slide,  # numpy array from skimage
     pos: Tuple[int, int],
     stride: Tuple[int, int],
-    target_size # : Tuple[int, int], # Now np.array
+    target_size  # : Tuple[int, int], # Now np.array
 ) -> np.ndarray:
     # Loads part of a WSI. Used for parallelization with ThreadPoolExecutor
-    # tile = slide.read_region(pos, 0, stride).convert("RGB").resize(target_size)
+    # tile = slide.read_region(
+    #   pos, 0, stride).convert("RGB").resize(target_size)
     tile = slide[pos[0]:pos[0] + stride[0], pos[1]:pos[1] + stride[1]]
     tile = resize(tile, tuple(target_size), preserve_range=True)
     tile = np.repeat(tile[:, :, np.newaxis], 3, axis=2)
@@ -191,8 +203,12 @@ def _load_tile(
     return tile
 
 
-# def load_slide(slide: openslide.OpenSlide, target_mpp: float = 256 / 224) -> np.ndarray:
-def load_slide(slide, target_mpp: float = 256 / 224) -> np.ndarray: # slide is now array from skimage
+# def load_slide(slide: openslide.OpenSlide,
+#                target_mpp: float = 256 / 224
+#                ) -> np.ndarray:
+def load_slide(slide,
+               target_mpp: float = 256 / 224
+               ) -> np.ndarray:  # slide is now array from skimage
     """Loads a slide into a numpy array."""
     # We load the slides in tiles to
     #  1. parallelize the loading process
@@ -202,7 +218,7 @@ def load_slide(slide, target_mpp: float = 256 / 224) -> np.ndarray: # slide is n
     # stride = np.ceil(np.array(slide.dimensions) / steps).astype(int)
     stride = np.ceil(np.asarray(slide.shape) / steps).astype(int)
     # slide_mpp = float(slide.properties[openslide.PROPERTY_NAME_MPP_X])
-    slide_mpp = 0.1 # HARDCODE HERE FOR NOW
+    slide_mpp = 0.1  # HARDCODE HERE FOR NOW
     tile_target_size = np.round(stride * slide_mpp / target_mpp).astype(int)
 
     with futures.ThreadPoolExecutor(min(32, os.cpu_count() or 1)) as executor:
@@ -211,9 +227,14 @@ def load_slide(slide, target_mpp: float = 256 / 224) -> np.ndarray: # slide is n
         for i in range(steps):  # row
             for j in range(steps):  # column
                 future = executor.submit(
-                    # _load_tile, slide, (stride * (j, i)), stride, tile_target_size  # type: ignore
-                    _load_tile, slide, (stride * (i, j)), stride, tile_target_size  # type: ignore
-                )
+                    # _load_tile, slide, (stride * (j, i)),
+                    # stride, tile_target_size  # type: ignore
+                    _load_tile,
+                    slide,
+                    (stride * (i, j)),
+                    stride,
+                    tile_target_size  # type: ignore
+                    )
                 future_coords[future] = (i, j)
 
         # write the loaded tiles into an image as soon as they are loaded
@@ -229,10 +250,9 @@ def load_slide(slide, target_mpp: float = 256 / 224) -> np.ndarray: # slide is n
             i, j = future_coords[tile_future]
             tile = tile_future.result()
 
-            x, y = tile_target_size * (i, j) # * (j, i)
+            x, y = tile_target_size * (i, j)  # * (j, i)
             # im[y : y + tile.shape[0], x : x + tile.shape[1], :] = tile
             im[x : x + tile.shape[0], y : y + tile.shape[1], :] = tile
-
 
     return im
 
@@ -248,10 +268,13 @@ def dropout1d_to_dropout2d(dropout1d):
 
 
 def linear_to_conv2d(linear):
-    """Converts a fully connected layer to a 1x1 Conv2d layer with the same weights."""
-    conv = nn.Conv2d(
-        in_channels=linear.in_features, out_channels=linear.out_features, kernel_size=1
-    )
+    """Converts a fully connected layer to a 1x1 Conv2d layer
+    with the same weights.
+    """
+    conv = nn.Conv2d(in_channels=linear.in_features,
+                     out_channels=linear.out_features,
+                     kernel_size=1
+                     )
     conv.load_state_dict(
         {
             "weight": linear.weight.view(conv.weight.shape),
@@ -278,10 +301,6 @@ if __name__ == "__main__":
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ]
     )
-
-    # load base fully convolutional model (w/o pooling / flattening or head)
-    # In this case we're loading the xiyue wang RetCLL model, change this bit for other networks
-    import ResNet
 
     base_model = ResNet.resnet50(
         num_classes=128, mlp=False, two_branch=False, normlinear=True
@@ -326,8 +345,8 @@ if __name__ == "__main__":
     )
 
     # we operate in two steps: we first collect all attention values / scores,
-    # the entirety of which we then calculate our scaling parameters from.  Only
-    # then we output the actual maps.
+    # the entirety of which we then calculate our scaling parameters from.
+    # Only then we output the actual maps.
     attention_maps: Dict[str, torch.Tensor] = {}
     score_maps: Dict[str, torch.Tensor] = {}
     masks: Dict[str, torch.Tensor] = {}
@@ -360,7 +379,9 @@ if __name__ == "__main__":
             # slide = openslide.OpenSlide(str(slide_path))
             slide = imread(slide_path)
             # slide_array = load_slide(slide)
-            slide_array = np.repeat(slide[:, :, np.newaxis], 3, axis=2) # From grey to 3-channel
+
+            # From grey to 3-channel
+            slide_array = np.repeat(slide[:, :, np.newaxis], 3, axis=2)
             # PIL.Image.fromarray(slide_array).save(slide_jpg)
 
             imsave(slide_cache_dir / 'fov.tif',
@@ -382,13 +403,16 @@ if __name__ == "__main__":
             # ceil(pixels/max_slice_size)
             # TRY SETTING NO SLICES
             no_slices = 1
-            #no_slices = (
+            # no_slices = (
             #    np.prod(slide_array.shape) + max_slice_size - 1
-            #) // max_slice_size
+            #    ) // max_slice_size
             step = slide_array.shape[1] // no_slices
             slices = []
             for slice_i in range(no_slices):
-                x = tfms(slide_array[:, slice_i * step : (slice_i + 1) * step, :])
+                x = tfms(slide_array[
+                            :, slice_i * step : (slice_i + 1) * step, :
+                            ]
+                         )
                 with torch.inference_mode():
                     res = base_model(x.unsqueeze(0).to(device))
                     slices.append(res.detach().cpu())
@@ -398,27 +422,29 @@ if __name__ == "__main__":
                 torch.save(feat_t, fp)  # type: ignore
 
         feat_t = feat_t.to(device)
-        # pool features, but use gaussian blur instead of avg pooling to reduce artifacts
+        # pool features, but use gaussian blur instead of avg pooling
+        # to reduce artifacts
         if args.blur_kernel_size:
             feat_t = transforms.functional.gaussian_blur(
                 feat_t, kernel_size=args.blur_kernel_size
             )
 
-        # calculate attention / classification scores according to the MIL model
+        # calculate attention / classification scores
+        # according to the MIL model
         with torch.inference_mode():
             att_map = att(feat_t).squeeze().cpu()
             score_map = score(feat_t.unsqueeze(0)).squeeze()
             score_map = torch.softmax(score_map, 0).cpu()
 
         # compute foreground mask
-        #mask = (
+        # mask = (
         #    np.array(
         #        PIL.Image.fromarray(slide_array)
         #        .resize(att_map.shape[::-1])
         #        .convert("L")
         #    )
         #    < args.mask_threshold
-        #)
+        # )
         mask = np.ones(att_map.shape)  # Just keep everything at the moment
 
         attention_maps[slide_name] = att_map
@@ -427,7 +453,8 @@ if __name__ == "__main__":
 
     # now we can use all of the features to calculate the scaling factors
     all_attentions = torch.cat(
-        # [attention_maps[s].view(-1)[masks[s].reshape(-1)] for s in score_maps.keys()]
+        # [attention_maps[s].view(-1)[masks[s].reshape(-1)] \
+        #   for s in score_maps.keys()]
         [attention_maps[s].view(-1) for s in score_maps.keys()]
     )
     att_lower = all_attentions.quantile(args.att_lower_threshold)
@@ -442,7 +469,9 @@ if __name__ == "__main__":
         ]
     )
     centered_score = all_true_scores - (1 / len(classes))
-    scale_factor = torch.quantile(centered_score.abs(), args.score_threshold) * 2
+    scale_factor = torch.quantile(centered_score.abs(),
+                                  args.score_threshold
+                                  ) * 2
 
     print("Writing heatmaps...")
     for slide_url in (progress := tqdm(args.slide_urls, leave=False)):
@@ -523,7 +552,10 @@ if __name__ == "__main__":
         # Quick version with transparency
         # opacity = 0.5
         # overlay = np.ubyte(opacity * slide_im + (1 - opacity) * map_im)
-        # imsave(slide_outdir / "attention_overlayed.png", overlay, check_contrast=False)
+        # imsave(slide_outdir / "attention_overlayed.png",
+        #        overlay,
+        #        check_contrast=False
+        #        )
 
         # Multiply FOV image by attention map
         try:
@@ -581,4 +613,7 @@ if __name__ == "__main__":
         # Quick version with transparency
         # opacity = 0.5
         # overlay = np.ubyte(opacity * slide_im + (1 - opacity) * map_im)
-        # imsave(slide_outdir / "map_overlayed.png", overlay, check_contrast=False)
+        # imsave(slide_outdir / "map_overlayed.png",
+        #        overlay,
+        #        check_contrast=False
+        #        )
