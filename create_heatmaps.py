@@ -339,10 +339,18 @@ if __name__ == "__main__":
         slide_cache_dir = args.cache_dir / slide_name
         slide_cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Load WSI as one image
-        if (slide_tif := slide_cache_dir / "slide.tif").exists():
+        # Load FOV image if there is one in cache,
+        # or make one from the specified input, with scaling for visualisation
+        if len(sorted(slide_cache_dir.glob('fov*.tif'))) > 0:
+            # if (fov_tif := slide_cache_dir / "fov*.tif").exists():
             # slide_array = np.array(PIL.Image.open(slide_jpg))
-            slide_array = imread(slide_tif)
+            fov_tif_path = sorted(slide_cache_dir.glob('fov*.tif'))[0]
+            slide_array_vis = imread(fov_tif_path)
+            if len(sorted(slide_cache_dir.glob('fov*.tif'))) > 1:
+                print('Warning: There was more than one fov image '
+                      'for input in cache.'
+                      )
+                print('Selected input image: {}'.format(fov_tif_path))
 
         else:
             slide_path = get_wsi(slide_url, cache_dir=args.cache_dir)
@@ -364,7 +372,10 @@ if __name__ == "__main__":
             slide_array_vis[slide_array_vis > 255.] = 255.
             slide_array_vis = np.uint8(slide_array_vis)
 
-            imsave(slide_cache_dir / "slide.tif", slide_array_vis, check_contrast=False)
+            fov_tif_path = slide_cache_dir / \
+                "fov-sat{}pc.tif".format(fraction_nonzeros_to_saturate)
+
+            imsave(fov_tif_path, slide_array_vis, check_contrast=False)
 
         # pass the WSI through the fully convolutional network'
         # since our RAM is still too small, we do this in two steps
@@ -453,10 +464,12 @@ if __name__ == "__main__":
         slide_outdir = args.output_path / slide_name
 
         # slide_im = PIL.Image.open(slide_cache_dir / "slide.jpg")
-        slide_im = imread(slide_cache_dir / "slide.tif")
+        slide_im = imread(fov_tif_path)
 
-        if not (slide_outdir / "slide.tif").exists():
-            shutil.copyfile(slide_cache_dir / "slide.tif", slide_outdir / "slide.tif")
+        if not (slide_outdir / fov_tif_path.name).exists():
+            shutil.copyfile(fov_tif_path,
+                            slide_outdir / fov_tif_path.name
+                            )
 
         # mask = masks[slide_name]
 
@@ -468,7 +481,7 @@ if __name__ == "__main__":
         im = plt.get_cmap(args.att_cmap)(att_map)
         im[:, :, 3] = mask
         # PIL.Image.fromarray(np.uint8(im * 255.0)).save(slide_outdir / "attention.png")
-        imsave(slide_outdir / "attention.png", np.uint8(im * 255.0), check_contrast=False)
+        imsave(slide_outdir / 'attention.png', np.uint8(im * 255.0), check_contrast=False)
         # attention map (blended with slide)
         im[:, :, 3] *= args.att_alpha
         # map_im = PIL.Image.fromarray(np.uint8(im * 255.0))
@@ -512,16 +525,33 @@ if __name__ == "__main__":
         # map_im = PIL.Image.fromarray(np.uint8(im * 255.0))
         map_im = np.uint8(im * 255.0)
         # map_im.save(slide_outdir / "map.png")
-        imsave(slide_outdir / "map.png", map_im)
+        imsave(slide_outdir / 'score-map.png', map_im)
         # overlayed onto slide
         # map_im = map_im.resize(slide_im.size, PIL.Image.Resampling.NEAREST)
-        map_im = resize(map_im, slide_im.shape)
+
+        # Resize to match input image: * 32 for ResNet50
+        # and crop right- and bottom-most pixels
+        # map_im = map_im.resize(slide_im.size, PIL.Image.Resampling.NEAREST)
+        map_im = resize(im, [im.shape[0] * 32,
+                             im.shape[1] * 32,
+                             4
+                             ]
+                        )
+        map_im = map_im[0:slide_im.shape[0], 0:slide_im.shape[1]]
+        map_im = np.uint8(map_im * 255.)
+        imsave(slide_outdir / 'upscaled_score-map.png', map_im)
+
+        # Multiply FOV image by attention map
+        slide_array_vis_norm = slide_array_vis / 255.  # 0 to 1
+        attention_coded_image = map_im[:, :, 0:3] * slide_array_vis_norm
+        attention_coded_image = np.uint8(attention_coded_image)
+        imsave(slide_outdir / 'score-coded-fov.tif', attention_coded_image)
 
         # x = slide_im.copy().convert("RGBA")
         # x.paste(map_im, mask=map_im)
         # x.convert("RGB").save(slide_outdir / "map_overlayed.jpg")
 
         # Quick version with transparency
-        opacity = 0.5
-        overlay = np.ubyte(opacity * slide_im + (1 - opacity) * map_im)
-        imsave(slide_outdir / "map_overlayed.png", overlay, check_contrast=False)
+        # opacity = 0.5
+        # overlay = np.ubyte(opacity * slide_im + (1 - opacity) * map_im)
+        # imsave(slide_outdir / "map_overlayed.png", overlay, check_contrast=False)
