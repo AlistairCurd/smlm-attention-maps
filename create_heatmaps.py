@@ -178,6 +178,7 @@ from pyzstd import ZstdFile
 from sftp import get_wsi
 
 # APC data
+# from skimage.filters import gaussian
 from skimage.io import imread
 from skimage.io import imsave
 from skimage.transform import resize
@@ -491,6 +492,25 @@ if __name__ == "__main__":
 # ?                          slide_outdir / fov_tif_path.name
 # ?                          )
 
+        # Make blurred image on which to display attention variations
+        # HARD-CODED sigma at the moment,
+        # ~ 250 nm FWHM at 45 nm pixels (10 um tiles)
+#        blurred_im = gaussian(slide_im, sigma=2.4)
+        # Scale for visualisation
+#        fraction_nonzeros_to_saturate = 0.05
+        # Find brightness value of pixel to scale to 255
+#        level_to_saturate = np.percentile(
+#            blurred_im[blurred_im > 0],
+#            100. * (1. - fraction_nonzeros_to_saturate)
+#            )
+        # Scale and clip
+#        blurred_im_vis = blurred_im * 255. / level_to_saturate
+#        blurred_im_vis[blurred_im_vis > 255.] = 255.
+#        blurred_im_vis = np.uint8(blurred_im_vis)
+        # Save
+#        blurred_im_vis_save_path = slide_outdir / "blurred_fov.tif"
+#        imsave(blurred_im_vis_save_path, blurred_im_vis, check_contrast=False)
+
         # Make and save saturated image for visualisation
         fraction_nonzeros_to_saturate = 0.2
         # Find brightness value of pixel to scale to 255
@@ -527,7 +547,7 @@ if __name__ == "__main__":
                check_contrast=False
                )
         # attention map (blended with slide)
-        im[:, :, 3] *= args.att_alpha
+        # im[:, :, 3] *= args.att_alpha
         # map_im = PIL.Image.fromarray(np.uint8(im * 255.0))
 
         # Resize to match input image: * 32 for ResNet50
@@ -536,7 +556,7 @@ if __name__ == "__main__":
         map_im = resize(im, [im.shape[0] * 32,
                              im.shape[1] * 32,
                              4
-                             ]
+                             ], order=3, preserve_range=True
                         )
         map_im = map_im[0:slide_im.shape[0], 0:slide_im.shape[1]]
         map_im = np.uint8(map_im * 255.)
@@ -557,17 +577,24 @@ if __name__ == "__main__":
         #        check_contrast=False
         #        )
 
-        # Multiply FOV image by attention map
-        try:
-            slide_im_vis_norm = slide_im_vis / 255.  # 0 to 1
-            attention_coded_image = map_im[:, :, 0:3] * slide_im_vis_norm
-            attention_coded_image = np.uint8(attention_coded_image)
-        except ValueError:
-            breakpoint()
+        # Multiply FOV image
+        slide_im_vis_norm = slide_im_vis / 255.  # 0 to 1
+        attention_coded_image = map_im[:, :, 0:3] * slide_im_vis_norm
+        attention_coded_image = np.uint8(attention_coded_image)
         imsave(slide_outdir / 'attention-coded-fov.tif',
                attention_coded_image,
                check_contrast=False
                )
+
+#        blurred_im_vis_norm = blurred_im_vis / 255.  # 0 to 1
+#        attention_coded_blurred_image = map_im[:, :, 0:3] \
+#                                        * blurred_im_vis_norm
+#        attention_coded_blurred_image = \
+#           np.uint8(attention_coded_blurred_image)
+#        imsave(slide_outdir / 'attention-coded-blurred-fov.tif',
+#               attention_coded_blurred_image,
+#               check_contrast=False
+#               )
 
         # score map
         scaled_score_map = (
@@ -577,7 +604,7 @@ if __name__ == "__main__":
 
         # create image with RGB from scores, Alpha from attention
         im = plt.get_cmap(args.score_cmap)(scaled_score_map)
-        im[:, :, 3] = att_map * mask * args.score_alpha
+        # im[:, :, 3] = att_map * mask * args.score_alpha
         # map_im = PIL.Image.fromarray(np.uint8(im * 255.0))
         map_im = np.uint8(im * 255.0)
         # map_im.save(slide_outdir / "map.png")
@@ -591,7 +618,7 @@ if __name__ == "__main__":
         map_im = resize(im, [im.shape[0] * 32,
                              im.shape[1] * 32,
                              4
-                             ]
+                             ], order=3, preserve_range=True
                         )
         map_im = map_im[0:slide_im.shape[0], 0:slide_im.shape[1]]
         map_im = np.uint8(map_im * 255.)
