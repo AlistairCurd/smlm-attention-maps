@@ -469,10 +469,18 @@ if __name__ == "__main__":
             for s in score_maps.keys()
         ]
     )
-    centered_score = all_true_scores - (1 / len(classes))
-    scale_factor = torch.quantile(centered_score.abs(),
-                                  args.score_threshold
-                                  ) * 2
+
+    # THIS IS UNHELPFUL AT THE MOMENT - MOST TRUE SCORES ARE ONE SIDE OF 0.5
+    # centered_score = all_true_scores - (1 / len(classes))
+    # scale_factor = torch.quantile(centered_score.abs(),
+    #                              args.score_threshold
+    #                              ) * 2
+
+    min_true_score = all_true_scores.min()
+    max_true_score = all_true_scores.max()
+
+    print('\nMin true score: {:.2f}'.format(min_true_score))
+    print('\nMax true score: {:.2f}'.format(max_true_score))
 
     print("Writing heatmaps...")
     for slide_url in (progress := tqdm(args.slide_urls, leave=False)):
@@ -556,7 +564,7 @@ if __name__ == "__main__":
         map_im = resize(im, [im.shape[0] * 32,
                              im.shape[1] * 32,
                              4
-                             ], order=3, preserve_range=True
+                             ], order=0, preserve_range=True
                         )
         map_im = map_im[0:slide_im.shape[0], 0:slide_im.shape[1]]
         map_im = np.uint8(map_im * 255.)
@@ -597,18 +605,43 @@ if __name__ == "__main__":
 #               )
 
         # score map
-        scaled_score_map = (
-            score_maps[slide_name][true_class_idx] - 1 / len(classes)
-        ) / scale_factor + 1 / len(classes)
-        scaled_score_map = (scaled_score_map * mask).clamp(0, 1)
 
-        # create image with RGB from scores, Alpha from attention
+# THIS WAS USING THE SCALING ASSUMING EVEN EITHER SIDE OF 0.5
+#        scaled_score_map = (
+#            score_maps[slide_name][true_class_idx] - 1 / len(classes)
+#        ) / scale_factor + 1 / len(classes)
+#        scaled_score_map = (scaled_score_map * mask).clamp(0, 1)
+
+        # scales to 0-1
+#        score_map_min_0 = \
+#            score_maps[slide_name][true_class_idx] \
+#            - score_maps[slide_name][true_class_idx].min()
+#        scaled_score_map = \
+#            score_map_min_0 / score_map_min_0.max()
+
+        # 0.5 will be at cmap 0.5; furthest from 0.5 is cmap 0 or 1
+        half_range_cmap = \
+            max(abs(min_true_score - 0.5) - 0.5, abs(max_true_score) - 0.5)
+        score_map = score_maps[slide_name][true_class_idx]
+        scaled_score_map = 0.5 + (score_map - 0.5) * 0.5 / half_range_cmap
+
+        # create image with RGB from scores, Alpha from attention (previously)
         im = plt.get_cmap(args.score_cmap)(scaled_score_map)
+
+        # Unscaled image
+#        im = plt.get_cmap(
+#            args.score_cmap
+#            )(score_maps[slide_name][true_class_idx])
+
         # im[:, :, 3] = att_map * mask * args.score_alpha
         # map_im = PIL.Image.fromarray(np.uint8(im * 255.0))
         map_im = np.uint8(im * 255.0)
         # map_im.save(slide_outdir / "map.png")
-        imsave(slide_outdir / 'score-map.png', map_im)
+        imsave(slide_outdir / 'score-map.png',
+               map_im,
+               check_contrast=False
+               )
+
         # overlayed onto slide
         # map_im = map_im.resize(slide_im.size, PIL.Image.Resampling.NEAREST)
 
@@ -618,11 +651,14 @@ if __name__ == "__main__":
         map_im = resize(im, [im.shape[0] * 32,
                              im.shape[1] * 32,
                              4
-                             ], order=3, preserve_range=True
+                             ], order=0, preserve_range=True
                         )
         map_im = map_im[0:slide_im.shape[0], 0:slide_im.shape[1]]
         map_im = np.uint8(map_im * 255.)
-        imsave(slide_outdir / 'upscaled_score-map.png', map_im)
+        imsave(slide_outdir / 'upscaled_score-map.png',
+               map_im,
+               check_contrast=False
+               )
 
         # Multiply FOV image by attention map
         slide_im_vis_norm = slide_im_vis / 255.  # 0 to 1
