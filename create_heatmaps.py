@@ -476,8 +476,11 @@ if __name__ == "__main__":
     #                              args.score_threshold
     #                              ) * 2
 
+    # For scaling cmap
     min_true_score = all_true_scores.min()
     max_true_score = all_true_scores.max()
+    half_range_cmap = \
+        max(abs(min_true_score - 0.5) - 0.5, abs(max_true_score) - 0.5)
 
     print('\nMin true score: {:.2f}'.format(min_true_score))
     print('\nMax true score: {:.2f}'.format(max_true_score))
@@ -620,8 +623,6 @@ if __name__ == "__main__":
 #            score_map_min_0 / score_map_min_0.max()
 
         # 0.5 will be at cmap 0.5; furthest from 0.5 is cmap 0 or 1
-        half_range_cmap = \
-            max(abs(min_true_score - 0.5) - 0.5, abs(max_true_score) - 0.5)
         score_map = score_maps[slide_name][true_class_idx]
         scaled_score_map = 0.5 + (score_map - 0.5) * 0.5 / half_range_cmap
 
