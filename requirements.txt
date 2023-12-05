@@ -1,4 +1,4 @@
-marugoto @ git+https://github.com/katherlab/marugoto
+marugoto @ git+https://github.com/AlistairCurd/marugoto-smlm
 fastai~=2.7
 matplotlib~=3.6
 openslide-python~=1.2
