@@ -479,8 +479,11 @@ if __name__ == "__main__":
     # For scaling cmap
     min_true_score = all_true_scores.min()
     max_true_score = all_true_scores.max()
-    half_range_cmap = \
-        max(abs(min_true_score - 0.5) - 0.5, abs(max_true_score) - 0.5)
+    mean_true_score = all_true_scores.mean()
+    std_true_score = all_true_scores.std()1
+    midrange_true_score = (min_true_score + max_true_score) / 2
+#    half_range_cmap = \
+#        max(abs(min_true_score - 0.5) - 0.5, abs(max_true_score) - 0.5)
 
     print('\nMin true score: {:.2f}'.format(min_true_score))
     print('\nMax true score: {:.2f}'.format(max_true_score))
@@ -622,9 +625,33 @@ if __name__ == "__main__":
 #        scaled_score_map = \
 #            score_map_min_0 / score_map_min_0.max()
 
+        # ANOTHER SCALING OPTION:
         # 0.5 will be at cmap 0.5; furthest from 0.5 is cmap 0 or 1
+        # score_map = score_maps[slide_name][true_class_idx]
+        # scaled_score_map = 0.5 + (score_map - 0.5) * 0.5 / half_range_cmap
+
+        # AND ANOTHER:
+        # Scales true scores to 0-1
+#        score_map = score_maps[slide_name][true_class_idx]
+#        scaled_score_map = \
+#            0.5 * ((score_map - midrange_true_score)
+#                   / (max_true_score - midrange_true_score)
+#                   + 1
+#                   )
+
+        # AND ANOTHER:
+        # Scale mean +- 3 * std to 0-1
         score_map = score_maps[slide_name][true_class_idx]
-        scaled_score_map = 0.5 + (score_map - 0.5) * 0.5 / half_range_cmap
+        scaled_score_map = \
+            ((score_map - mean_true_score) / (3 * std_true_score) + 1) * 0.5
+
+        # Include score_threshold argument for scaling
+        # scaled_score_map = \
+        #   (scaled_score_map - 0.5) * 0.5 / (args.score_threshold - 0.5) + 0.5
+        # THRESHOLD ONLY HIGH
+        # scaled_score_map = scaled_score_map / args.score_threshold
+
+        scaled_score_map = scaled_score_map.clamp(0, 1)
 
         # create image with RGB from scores, Alpha from attention (previously)
         im = plt.get_cmap(args.score_cmap)(scaled_score_map)
@@ -663,10 +690,10 @@ if __name__ == "__main__":
 
         # Multiply FOV image by attention map
         slide_im_vis_norm = slide_im_vis / 255.  # 0 to 1
-        attention_coded_image = map_im[:, :, 0:3] * slide_im_vis_norm
-        attention_coded_image = np.uint8(attention_coded_image)
+        score_coded_image = map_im[:, :, 0:3] * slide_im_vis_norm
+        score_coded_image = np.uint8(score_coded_image)
         imsave(slide_outdir / 'score-coded-fov.tif',
-               attention_coded_image,
+               score_coded_image,
                check_contrast=False
                )
 
