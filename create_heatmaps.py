@@ -73,7 +73,7 @@ if __name__ == "__main__":
         "--mask-threshold",
         metavar="THRESH",
         type=int,
-        default=224,
+        default=20,
         help="Brightness threshold for background removal.",
     )
     threshold_group.add_argument(
@@ -174,11 +174,12 @@ from tqdm import tqdm
 import numpy as np
 from fastai.vision.all import load_learner
 from pyzstd import ZstdFile
-# import PIL
+import PIL
 from sftp import get_wsi
 
 # APC data
 # from skimage.filters import gaussian
+# from skimage.color import rgba2rgb
 from skimage.io import imread
 from skimage.io import imsave
 from skimage.transform import resize
@@ -438,15 +439,24 @@ if __name__ == "__main__":
             score_map = torch.softmax(score_map, 0).cpu()
 
         # compute foreground mask
-        # mask = (
-        #    np.array(
-        #        PIL.Image.fromarray(slide_array)
-        #        .resize(att_map.shape[::-1])
-        #        .convert("L")
-        #    )
-        #    < args.mask_threshold
-        # )
-        mask = np.ones(att_map.shape)  # Just keep everything at the moment
+        # Leave some tiles from edges as False,
+        # IDEALLY FROM POOLING ARUGUMENT...
+        num_tiles_at_edge = 4
+        mask = np.full(att_map.shape, False)
+        for row in range(num_tiles_at_edge,
+                         slide_array.shape[0] // 32
+                         - num_tiles_at_edge
+                         ):
+            for column in range(num_tiles_at_edge,
+                                slide_array.shape[1] // 32
+                                - num_tiles_at_edge
+                                ):
+                # Sum over 224 x 224 for mask threshold
+                tile = slide_array[:, :, 0][
+                    (row - 3) * 32:(row + 4) * 32,
+                    (column - 3) * 32:(column + 4) * 32
+                    ]
+                mask[row, column] = tile.sum() > args.mask_threshold
 
         attention_maps[slide_name] = att_map
         score_maps[slide_name] = score_map
@@ -454,9 +464,10 @@ if __name__ == "__main__":
 
     # now we can use all of the features to calculate the scaling factors
     all_attentions = torch.cat(
-        # [attention_maps[s].view(-1)[masks[s].reshape(-1)] \
-        #   for s in score_maps.keys()]
-        [attention_maps[s].view(-1) for s in score_maps.keys()]
+        [attention_maps[s].view(-1)[masks[s].reshape(-1)]
+            for s in score_maps.keys()]
+        # Without mask:
+        # [attention_maps[s].view(-1) for s in score_maps.keys()]
     )
     att_lower = all_attentions.quantile(args.att_lower_threshold)
     att_upper = all_attentions.quantile(args.att_upper_threshold)
@@ -464,24 +475,26 @@ if __name__ == "__main__":
     all_true_scores = torch.cat(
         [
             # mask out background scores, then linearize them
-            # score_maps[s][true_class_idx].view(-1)[masks[s].reshape(-1)]
-            score_maps[s][true_class_idx].view(-1)
+            score_maps[s][true_class_idx].view(-1)[masks[s].reshape(-1)]
+            # Without masks:
+            # score_maps[s][true_class_idx].view(-1)
             for s in score_maps.keys()
         ]
     )
 
-    # THIS IS UNHELPFUL AT THE MOMENT - MOST TRUE SCORES ARE ONE SIDE OF 0.5
-    # centered_score = all_true_scores - (1 / len(classes))
-    # scale_factor = torch.quantile(centered_score.abs(),
-    #                              args.score_threshold
-    #                              ) * 2
+    # THIS SOMETIMES SEEMS UNHELPFUL AT THE MOMENT -
+    # MOST TRUE SCORES ARE ONE SIDE OF 0.5
+    centered_score = all_true_scores - (1 / len(classes))
+    scale_factor = torch.quantile(centered_score.abs(),
+                                  args.score_threshold
+                                  ) * 2
 
     # For scaling cmap
     min_true_score = all_true_scores.min()
     max_true_score = all_true_scores.max()
     mean_true_score = all_true_scores.mean()
-    std_true_score = all_true_scores.std()1
-    midrange_true_score = (min_true_score + max_true_score) / 2
+    std_true_score = all_true_scores.std()
+#    midrange_true_score = (min_true_score + max_true_score) / 2
 #    half_range_cmap = \
 #        max(abs(min_true_score - 0.5) - 0.5, abs(max_true_score) - 0.5)
 
@@ -506,25 +519,6 @@ if __name__ == "__main__":
 # ?                          slide_outdir / fov_tif_path.name
 # ?                          )
 
-        # Make blurred image on which to display attention variations
-        # HARD-CODED sigma at the moment,
-        # ~ 250 nm FWHM at 45 nm pixels (10 um tiles)
-#        blurred_im = gaussian(slide_im, sigma=2.4)
-        # Scale for visualisation
-#        fraction_nonzeros_to_saturate = 0.05
-        # Find brightness value of pixel to scale to 255
-#        level_to_saturate = np.percentile(
-#            blurred_im[blurred_im > 0],
-#            100. * (1. - fraction_nonzeros_to_saturate)
-#            )
-        # Scale and clip
-#        blurred_im_vis = blurred_im * 255. / level_to_saturate
-#        blurred_im_vis[blurred_im_vis > 255.] = 255.
-#        blurred_im_vis = np.uint8(blurred_im_vis)
-        # Save
-#        blurred_im_vis_save_path = slide_outdir / "blurred_fov.tif"
-#        imsave(blurred_im_vis_save_path, blurred_im_vis, check_contrast=False)
-
         # Make and save saturated image for visualisation
         fraction_nonzeros_to_saturate = 0.2
         # Find brightness value of pixel to scale to 255
@@ -535,10 +529,12 @@ if __name__ == "__main__":
         # Scale and clip
         slide_im_vis = slide_im * 255. / level_to_saturate
         slide_im_vis[slide_im_vis > 255.] = 255.
-        slide_im_vis = np.uint8(slide_im_vis)
+        slide_im_vis = np.uint8(np.round(slide_im_vis))
         # Save
         im_vis_save_path = slide_outdir / \
-            "fov-sat{}pc.tif".format(fraction_nonzeros_to_saturate)
+            "fov-sat{}pc.tif".format(
+                round(fraction_nonzeros_to_saturate * 100)
+                )
         imsave(im_vis_save_path, slide_im_vis, check_contrast=False)
 
         # Get mask from masks calculated earlier
@@ -547,72 +543,63 @@ if __name__ == "__main__":
         # attention map
         att_map = (attention_maps[slide_name] - att_lower) \
             / (att_upper - att_lower)
+        att_map = att_map * mask
         att_map = att_map.clamp(0, 1)
 
         # bare attention
         im = plt.get_cmap(args.att_cmap)(att_map)
-
         im[:, :, 3] = mask
 
         # PIL.Image.fromarray(np.uint8(im * 255.0))\
         # .save(slide_outdir / "attention.png")
         imsave(slide_outdir / 'attention.png',
-               np.uint8(im * 255.0),
+               np.uint8(np.round(im * 255.0)),
                check_contrast=False
                )
+
         # attention map (blended with slide)
-        # im[:, :, 3] *= args.att_alpha
+
         # map_im = PIL.Image.fromarray(np.uint8(im * 255.0))
 
         # Resize to match input image: * 32 for ResNet50
         # and crop right- and bottom-most pixels
         # map_im = map_im.resize(slide_im.size, PIL.Image.Resampling.NEAREST)
-        map_im = resize(im, [im.shape[0] * 32,
-                             im.shape[1] * 32,
-                             4
-                             ], order=0, preserve_range=True
-                        )
-        map_im = map_im[0:slide_im.shape[0], 0:slide_im.shape[1]]
-        map_im = np.uint8(map_im * 255.)
+        upscaled_att_map = resize(im, [im.shape[0] * 32,
+                                       im.shape[1] * 32,
+                                       4
+                                       ], order=0, preserve_range=True
+                                  )
+        upscaled_att_map = upscaled_att_map[0:slide_im.shape[0],
+                                            0:slide_im.shape[1]
+                                            ]
+        upscaled_att_map = np.uint8(np.round(upscaled_att_map * 255.))
+
         imsave(slide_outdir / 'upscaled_attention.png',
-               map_im,
+               upscaled_att_map,
                check_contrast=False
                )
 
-        # x = slide_im.copy().convert("RGBA")
-        # x.paste(map_im, mask=map_im)
-        # x.convert("RGB").save(slide_outdir / "attention_overlayed.jpg")
+        att_map_overlay = PIL.Image.fromarray(slide_im_vis, mode='RGB')
+        att_map_overlay.convert('RGBA')
+        upscaled_att_map[:, :, 3] = np.uint8(np.round(args.att_alpha * 255.))
+        upscaled_att_map = PIL.Image.fromarray(upscaled_att_map)
+        att_map_overlay.paste(upscaled_att_map, mask=upscaled_att_map)
+        att_map_overlay.convert('RGB')
+        att_map_overlay.save(slide_outdir / 'attention-map-overlay.png')
 
-        # Quick version with transparency
-        # opacity = 0.5
-        # overlay = np.ubyte(opacity * slide_im + (1 - opacity) * map_im)
-        # imsave(slide_outdir / "attention_overlayed.png",
-        #        overlay,
-        #        check_contrast=False
-        #        )
-
-        # Multiply FOV image
-        slide_im_vis_norm = slide_im_vis / 255.  # 0 to 1
-        attention_coded_image = map_im[:, :, 0:3] * slide_im_vis_norm
-        attention_coded_image = np.uint8(attention_coded_image)
-        imsave(slide_outdir / 'attention-coded-fov.tif',
-               attention_coded_image,
-               check_contrast=False
-               )
-
-#        blurred_im_vis_norm = blurred_im_vis / 255.  # 0 to 1
-#        attention_coded_blurred_image = map_im[:, :, 0:3] \
-#                                        * blurred_im_vis_norm
-#        attention_coded_blurred_image = \
-#           np.uint8(attention_coded_blurred_image)
-#        imsave(slide_outdir / 'attention-coded-blurred-fov.tif',
-#               attention_coded_blurred_image,
+        # Multiply FOV image version
+#        slide_im_vis_norm = slide_im_vis / 255.  # 0 to 1
+#        attention_coded_image = \
+#           upscaled_att_map[:, :, 0:3] * slide_im_vis_norm
+#        attention_coded_image = np.uint8(attention_coded_image)
+#        imsave(slide_outdir / 'attention-coded-fov.tif',
+#               attention_coded_image,
 #               check_contrast=False
 #               )
 
-        # score map
+        # Score map
 
-# THIS WAS USING THE SCALING ASSUMING EVEN EITHER SIDE OF 0.5
+        # THIS WAS THE ORIGINAL SCALING
 #        scaled_score_map = (
 #            score_maps[slide_name][true_class_idx] - 1 / len(classes)
 #        ) / scale_factor + 1 / len(classes)
@@ -653,24 +640,19 @@ if __name__ == "__main__":
 
         scaled_score_map = scaled_score_map.clamp(0, 1)
 
-        # create image with RGB from scores, Alpha from attention (previously)
+        # create image with RGB from scores, Alpha from attention
         im = plt.get_cmap(args.score_cmap)(scaled_score_map)
+        im[:, :, 3] = att_map * mask * args.score_alpha
 
-        # Unscaled image
-#        im = plt.get_cmap(
-#            args.score_cmap
-#            )(score_maps[slide_name][true_class_idx])
-
-        # im[:, :, 3] = att_map * mask * args.score_alpha
-        # map_im = PIL.Image.fromarray(np.uint8(im * 255.0))
         map_im = np.uint8(im * 255.0)
-        # map_im.save(slide_outdir / "map.png")
+
         imsave(slide_outdir / 'score-map.png',
                map_im,
                check_contrast=False
                )
 
-        # overlayed onto slide
+        # Upscaled score map
+
         # map_im = map_im.resize(slide_im.size, PIL.Image.Resampling.NEAREST)
 
         # Resize to match input image: * 32 for ResNet50
@@ -681,30 +663,33 @@ if __name__ == "__main__":
                              4
                              ], order=0, preserve_range=True
                         )
-        map_im = map_im[0:slide_im.shape[0], 0:slide_im.shape[1]]
-        map_im = np.uint8(map_im * 255.)
-        imsave(slide_outdir / 'upscaled_score-map.png',
-               map_im,
-               check_contrast=False
-               )
+        map_im = np.uint8(np.round(map_im[0:slide_im.shape[0],
+                                          0:slide_im.shape[1]] * 255.
+                                   )
+                          )
+        map_im_save = PIL.Image.new(mode='RGBA',
+                                    size=(map_im.shape[1], map_im.shape[0]),
+                                    color='white'
+                                    )
+        map_im = PIL.Image.fromarray(map_im)
+        map_im_save.paste(map_im, mask=map_im)
+        map_im_save.convert('RGB')
 
-        # Multiply FOV image by attention map
-        slide_im_vis_norm = slide_im_vis / 255.  # 0 to 1
-        score_coded_image = map_im[:, :, 0:3] * slide_im_vis_norm
-        score_coded_image = np.uint8(score_coded_image)
-        imsave(slide_outdir / 'score-coded-fov.tif',
-               score_coded_image,
-               check_contrast=False
-               )
+        map_im_save.save(slide_outdir / 'upscaled_score-map.png')
 
-        # x = slide_im.copy().convert("RGBA")
-        # x.paste(map_im, mask=map_im)
-        # x.convert("RGB").save(slide_outdir / "map_overlayed.jpg")
+        # Multiply FOV image by score map
+#        slide_im_vis_norm = slide_im_vis / 255.  # 0 to 1
+#        score_coded_image = map_im[:, :, 0:3] * slide_im_vis_norm
+#        score_coded_image = np.uint8(score_coded_image)
+#        imsave(slide_outdir / 'score-coded-fov.tif',
+#               score_coded_image,
+#               check_contrast=False
+#               )
 
-        # Quick version with transparency
-        # opacity = 0.5
-        # overlay = np.ubyte(opacity * slide_im + (1 - opacity) * map_im)
-        # imsave(slide_outdir / "map_overlayed.png",
-        #        overlay,
-        #        check_contrast=False
-        #        )
+        # Overlay scores onto image, transparency is attention score
+        score_map_overlay = PIL.Image.fromarray(slide_im_vis, mode='RGB')
+        score_map_overlay.convert('RGBA')
+        # map_im = PIL.Image.fromarray(map_im)
+        score_map_overlay.paste(map_im, mask=map_im)
+        score_map_overlay.convert('RGB')
+        score_map_overlay.save(slide_outdir / 'score-map-overlay.png')
